@@ -1,0 +1,358 @@
+import numpy as np
+import math
+import CoolProp.CoolProp as CP
+import matplotlib.pyplot as plt
+
+def calculate_friction_factors(Re, roughness, inner_diameter):
+    def colebrook_white():
+        relative_roughness = roughness / inner_diameter
+        f = 0.02
+        for i in range(100):
+            f_new = 1 / (-2 * math.log10(
+                relative_roughness/3.7 +
+                2.51 / (Re * math.sqrt(f))
+            ))**2
+            if abs(f - f_new) < 1e-8:
+                return f_new
+            f = f_new
+        return f
+
+    def smooth_tube():
+        return 0.184 * Re**(-0.2)
+
+    def turbulent_flow():
+        return 0.316 * Re**(-0.25)
+
+    def kannan_nikuradse():
+        relative_roughness = roughness / inner_diameter
+        f_old = 0.02
+        tolerance = 1e-8
+        max_iterations = 200
+
+        for i in range(max_iterations):
+            f_new = 1 / (-2 * math.log10(
+                relative_roughness/3.7 +
+                2.51 / (Re * math.sqrt(f_old))
+            ))**2
+
+            if abs(f_new - f_old) < tolerance:
+                return f_new
+
+            f_old = f_new
+
+        return f_old
+
+    return {
+        "Colebrook-White": {
+            "value": colebrook_white(),
+            "type": "Iterative"
+        },
+        "Smooth Tube": {
+            "value": smooth_tube(),
+            "type": "Analytical"
+        },
+        "Turbulent Flow": {
+            "value": turbulent_flow(),
+            "type": "Analytical"
+        },
+        "Kannan-Nikuradse": {
+            "value": kannan_nikuradse(),
+            "type": "Iterative"
+        }
+    }
+
+class ThermoProperties:
+    def __init__(self, fluid_name='Water', initial_temp=300, initial_pressure=15e6):
+        self.fluid_name = fluid_name
+        self.initial_temp = initial_temp + 273.15
+        self.initial_pressure = initial_pressure
+
+    def calculate_dynamic_properties(self, current_temp_celsius, current_pressure):
+        current_temp = current_temp_celsius + 273.15
+
+        try:
+            density = CP.PropsSI('D', 'T', current_temp, 'P', current_pressure, self.fluid_name)
+            specific_heat = CP.PropsSI('C', 'T', current_temp, 'P', current_pressure, self.fluid_name)
+            viscosity = CP.PropsSI('V', 'T', current_temp, 'P', current_pressure, self.fluid_name)
+            thermal_conductivity = CP.PropsSI('L', 'T', current_temp, 'P', current_pressure, self.fluid_name)
+
+            return {
+                'density': density,
+                'specific_heat': specific_heat,
+                'viscosity': viscosity,
+                'thermal_conductivity': thermal_conductivity
+            }
+        except Exception as e:
+            print(f"Özellik hesaplamasında hata: {e}")
+            return None
+
+def plot_temperature_pressure_meters(temperatures, pressures):
+    meters = list(range(len(temperatures)))
+
+    plt.figure(figsize=(15, 10))
+
+    # Sıcaklık grafiği
+    plt.subplot(2, 1, 1)
+    plt.plot(meters, temperatures, 'r-', label='Sıcaklık')
+    plt.title('Metrelere Göre Sıcaklık Değişimi')
+    plt.xlabel('Metre')
+    plt.ylabel('Sıcaklık (°C)')
+    plt.legend()
+    plt.grid(True)
+
+    # Basınç grafiği
+    plt.subplot(2, 1, 2)
+    plt.plot(meters, [p/1e6 for p in pressures], 'b-', label='Basınç')
+    plt.title('Metrelere Göre Basınç Değişimi')
+    plt.xlabel('Metre')
+    plt.ylabel('Basınç (MPa)')
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_friction_factors(all_friction_factors):
+    meters = list(range(len(all_friction_factors)))
+    methods = list(all_friction_factors[0].keys())
+
+    plt.figure(figsize=(16, 9))
+
+    # Her bir metot için farklı renk ve marker
+    colors = ['red', 'blue', 'green', 'purple']
+    markers = ['o', 's', '^', 'D']
+
+    for i, method in enumerate(methods):
+        values = [factors[method]['value'] for factors in all_friction_factors]
+
+        plt.plot(meters, values,
+                 label=method,
+                 color=colors[i],
+                 marker=markers[i],
+                 linestyle='-',
+                 linewidth=2,
+                 markersize=8)
+
+    plt.title('Metrelere Göre Sürtünme Faktörleri Değişimi', fontsize=16)
+    plt.xlabel('Metre', fontsize=14)
+    plt.ylabel('Sürtünme Faktörü', fontsize=14)
+    plt.legend(fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.7)
+
+    # Detaylı bilgilendirme
+    for method in methods:
+        values = [factors[method]['value'] for factors in all_friction_factors]
+        plt.text(len(meters)-1, values[-1],
+                 f"{method}\nSon Değer: {values[-1]:.4f}",
+                 fontsize=10,
+                 verticalalignment='bottom')
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_colebrook_nikuradse_friction_factors(all_friction_factors):
+    meters = list(range(len(all_friction_factors)))
+
+    plt.figure(figsize=(16, 10))
+
+    # Colebrook-White
+    colebrook_values = [factors['Colebrook-White']['value'] for factors in all_friction_factors]
+
+    plt.subplot(2, 1, 1)
+    plt.plot(meters, colebrook_values, color='red', marker='o', linestyle='-', linewidth=2, markersize=8)
+    plt.title('Metrelere Göre Colebrook-White Sürtünme Faktörü', fontsize=16)
+    plt.xlabel('Metre', fontsize=14)
+    plt.ylabel('Sürtünme Faktörü', fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+
+    # İstatistiksel bilgiler
+    plt.text(0.02, 0.95,
+             f"Min: {min(colebrook_values):.6f}\n"
+             f"Max: {max(colebrook_values):.6f}\n"
+             f"Ortalama: {np.mean(colebrook_values):.6f}",
+             transform=plt.gca().transAxes,
+             verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
+    # Kannan-Nikuradse
+    nikuradse_values = [factors['Kannan-Nikuradse']['value'] for factors in all_friction_factors]
+
+    plt.subplot(2, 1, 2)
+    plt.plot(meters, nikuradse_values, color='blue', marker='s', linestyle='-', linewidth=2, markersize=8)
+    plt.title('Metrelere Göre Kannan-Nikuradse Sürtünme Faktörü', fontsize=16)
+    plt.xlabel('Metre', fontsize=14)
+    plt.ylabel('Sürtünme Faktörü', fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+
+    # İstatistiksel bilgiler
+    plt.text(0.02, 0.95,
+             f"Min: {min(nikuradse_values):.6f}\n"
+             f"Max: {max(nikuradse_values):.6f}\n"
+             f"Ortalama: {np.mean(nikuradse_values):.6f}",
+             transform=plt.gca().transAxes,
+             verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
+    plt.tight_layout()
+    plt.show()
+
+def analyze_friction_factors(all_friction_factors):
+    methods = list(all_friction_factors[0].keys())
+
+    print("\n{:=^60}".format(" SÜRTÜNME FAKTÖRLERİ DETAYLI ANALİZ "))
+
+    for method in methods:
+        values = [factors[method]['value'] for factors in all_friction_factors]
+
+        print(f"\n{method} İstatistikleri:")
+        print(f"Minimum: {min(values):.6f}")
+        print(f"Maksimum: {max(values):.6f}")
+        print(f"Ortalama: {np.mean(values):.6f}")
+        print(f"Standart Sapma: {np.std(values):.6f}")
+
+        # Değişim yüzdesi
+        change_percentage = (max(values) - min(values)) / min(values) * 100
+        print(f"Toplam Değişim Yüzdesi: {change_percentage:.2f}%")
+
+def print_detailed_meter_analysis(meter, temp, pressure, properties, reynolds, friction_factors):
+    print(f"\n{'-'*50}")
+    print(f"{meter}. METRE DETAYLI ANALİZ")
+    print(f"{'-'*50}")
+
+    print(f"Sıcaklık: {temp:.2f} °C")
+    print(f"Basınç: {pressure/1e6:.4f} MPa")
+    print(f"Yoğunluk: {properties['density']:.2f} kg/m³")
+    print(f"Özgül Isı: {properties['specific_heat']:.2f} J/kg.K")
+    print(f"Reynolds Sayısı: {reynolds:.2f}")
+
+    print("\nSÜRTÜNME FAKTÖRLERİ KARŞILAŞTIRMASI:")
+    print("{:<20} {:<15} {:<15} {:<15}".format("Metot", "Faktör", "Hesaplama Tipi", "Fark (%)"))
+    print("-" * 65)
+
+    min_factor = min(factors['value'] for factors in friction_factors.values())
+
+    for method, details in friction_factors.items():
+        percentage_diff = abs(details['value'] - min_factor) / min_factor * 100
+        print("{:<20} {:<15.6f} {:<15} {:<15.2f}".format(
+            method,
+            details['value'],
+            details['type'],
+            percentage_diff
+        ))
+
+def advanced_thermal_simulation(initial_params):
+    n_tubes = initial_params['n_tubes']
+    outer_diameter = initial_params['outer_diameter']
+    tube_thickness = initial_params['tube_thickness']
+    length_per_tube = initial_params['length_per_tube']
+    primary_flow_rate = initial_params['primary_flow_rate']
+    total_heat_transfer = initial_params['total_heat_transfer']
+    inlet_temperature = initial_params['inlet_temperature']
+    inlet_pressure = initial_params['inlet_pressure']
+    g = 9.81
+    roughness = 0.26e-3
+
+    thermo_props = ThermoProperties(
+        fluid_name='Water',
+        initial_temp=inlet_temperature,
+        initial_pressure=inlet_pressure
+    )
+
+    inner_diameter = outer_diameter - 2 * tube_thickness
+    cross_sectional_area = np.pi * (inner_diameter / 2)**2
+    flow_rate_per_tube = primary_flow_rate / n_tubes
+
+    initial_properties = thermo_props.calculate_dynamic_properties(
+        inlet_temperature,
+        inlet_pressure
+    )
+
+    velocity = flow_rate_per_tube / (initial_properties['density'] * cross_sectional_area)
+    heat_flux_per_m = total_heat_transfer / (n_tubes * length_per_tube)
+
+    temperatures = [inlet_temperature]
+    pressures = [inlet_pressure]
+    properties_log = [initial_properties]
+    all_friction_factors = []
+
+    current_temp = inlet_temperature
+    current_pressure = inlet_pressure
+
+    for i in range(int(length_per_tube)):
+        current_properties = thermo_props.calculate_dynamic_properties(
+            current_temp,
+            current_pressure
+        )
+
+        current_reynolds = (current_properties['density'] * velocity * inner_diameter) / current_properties['viscosity']
+
+        current_friction_factors = calculate_friction_factors(current_reynolds, roughness, inner_diameter)
+        all_friction_factors.append(current_friction_factors)
+
+        print_detailed_meter_analysis(
+            i+1,
+            current_temp,
+            current_pressure,
+            current_properties,
+            current_reynolds,
+            current_friction_factors
+        )
+
+        delta_temp = heat_flux_per_m / (flow_rate_per_tube * current_properties['specific_heat'])
+        new_temp = current_temp  delta_temp
+
+        frictional_loss = (current_friction_factors['Colebrook-White']['value'] * (1 / inner_diameter) *
+                           0.5 * current_properties['density'] * velocity**2)
+
+        gravitational_loss = current_properties['density'] * g * (1 if i >= 8 else -1)
+
+        delta_pressure = -(frictional_loss + gravitational_loss)
+        new_pressure = current_pressure + delta_pressure
+
+        current_temp = new_temp
+        current_pressure = new_pressure
+
+        temperatures.append(current_temp)
+        pressures.append(current_pressure)
+        properties_log.append(current_properties)
+
+    # Grafikleri çizdir
+    plot_temperature_pressure_meters(temperatures, pressures)
+    plot_friction_factors(all_friction_factors)
+    plot_colebrook_nikuradse_friction_factors(all_friction_factors)
+    analyze_friction_factors(all_friction_factors)
+
+    return temperatures, pressures, properties_log, all_friction_factors
+
+# Parametre sözlüğü
+initial_params = {
+    'n_tubes': 5700,
+    'outer_diameter': 0.019,
+    'tube_thickness': 0.0012,
+    'length_per_tube': 16.0,
+    'primary_flow_rate': 5100,
+    'total_heat_transfer': 820e6,
+    'inlet_temperature': 300,  # Celsius
+    'inlet_pressure': 15e6
+}
+
+# Simülasyonu çalıştır
+temperatures, pressures, properties, all_friction_factors = advanced_thermal_simulation(initial_params)
+
+# Özet bilgileri yazdır
+print("\nSonuç Özeti:")
+print(f"Toplam Sıcaklık Değişimi: {temperatures[-1] - temperatures[0]:.2f} °C")
+print(f"Toplam Basınç Değişimi: {(pressures[-1] - pressures[0])/1e6:.4f} MPa")
+
+"""U-tüp ve cast iron malzeme için en uygun sürtünme faktörü hesaplama yöntemi Colebrook-White veya Nikuradse denklemleridir. Ancak sizin durumunuzda özellikle:
+
+Cast Iron malzeme
+U-tüp geometrisi
+Yüksek Reynolds sayısı
+Göz önüne alındığında, Colebrook-White denklemi en uygun seçim olacaktır. Çünkü:
+
+Pürüzlü yüzeyleri daha iyi modelleyebilir
+Cast Iron'un yüzey pürüzlülüğünü hesaba katar
+Geniş Reynolds sayısı aralığında geçerlidir
+Hem laminer hem türbülan akış için kullanılabilir
+"""
